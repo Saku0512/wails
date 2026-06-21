@@ -79,33 +79,40 @@ func (v *OriginValidator) matchesOriginPattern(pattern, origin string) bool {
 
 // wildcardPatternToRegex converts wildcard pattern to regex.
 //
-// Wildcards are only expanded when they represent a full domain component,
-// i.e. immediately after "://", ".", or ":". A wildcard appended to a
-// partial label (e.g. "com*") is stripped so that it cannot match across
-// domain boundaries (GHSA-47hv-j4px-h3c9).
+// Wildcards are only expanded when they represent a full origin component,
+// i.e. preceded by "://", ".", or ":" and followed by ".", ":", "/", or
+// the end of the pattern. A wildcard embedded in a partial label (e.g.
+// "*myapp.com" or "com*") is stripped so that it cannot match across domain
+// boundaries (GHSA-47hv-j4px-h3c9).
 func (v *OriginValidator) wildcardPatternToRegex(wildcardPattern string) string {
-	// Escape special regex characters except *
-	specialChars := []string{"\\", ".", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]"}
-
-	escaped := wildcardPattern
-	for _, specialChar := range specialChars {
-		escaped = strings.ReplaceAll(escaped, specialChar, "\\"+specialChar)
+	var escaped strings.Builder
+	for i := 0; i < len(wildcardPattern); i++ {
+		if wildcardPattern[i] == '*' {
+			if wildcardHasComponentBoundaries(wildcardPattern, i) {
+				escaped.WriteString("[^.:/]{0,}")
+			}
+			continue
+		}
+		escaped.WriteString(regexp.QuoteMeta(wildcardPattern[i : i+1]))
 	}
 
-	// Replace * only when preceded by a separator so it matches a full
-	// component. Order matters: handle :// before : to avoid partial overlap.
-	// Use {0,} instead of * as the regex quantifier to avoid collision with
-	// the literal * cleanup in the next step.
-	escaped = strings.ReplaceAll(escaped, "//*", "//[^.:/]{0,}")
-	escaped = strings.ReplaceAll(escaped, "\\.*", "\\.[^.:/]{0,}")
-	escaped = strings.ReplaceAll(escaped, ":*", ":[^.:/]{0,}")
-
-	// Strip any remaining * that is not preceded by a separator.
-	// This prevents suffix-based bypasses like "com*" matching "community".
-	escaped = strings.ReplaceAll(escaped, "*", "")
-
 	// Anchor the pattern to match the entire string
-	return "^" + escaped + "$"
+	return "^" + escaped.String() + "$"
+}
+
+func wildcardHasComponentBoundaries(pattern string, wildcardIndex int) bool {
+	hasLeftBoundary := strings.HasSuffix(pattern[:wildcardIndex], "://") ||
+		(wildcardIndex > 0 && (pattern[wildcardIndex-1] == '.' || pattern[wildcardIndex-1] == ':'))
+	if !hasLeftBoundary {
+		return false
+	}
+
+	if wildcardIndex == len(pattern)-1 {
+		return true
+	}
+
+	next := pattern[wildcardIndex+1]
+	return next == '.' || next == ':' || next == '/'
 }
 
 // GetOriginFromURL extracts origin from URL string

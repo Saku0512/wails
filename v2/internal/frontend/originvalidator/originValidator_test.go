@@ -39,6 +39,12 @@ func TestWildcardPatternDoesNotCrossDomainBoundaries(t *testing.T) {
 			origin:         "https://evil.com",
 			expected:       false,
 		},
+		{
+			name:           "subdomain wildcard rejects suffix domain bypass",
+			allowedOrigins: "https://*.myapp.com",
+			origin:         "https://api.myapp.com.evil.com",
+			expected:       false,
+		},
 		// Trailing wildcard — the vulnerability vector
 		{
 			name:           "trailing wildcard rejects different TLD (bypass attempt)",
@@ -57,6 +63,48 @@ func TestWildcardPatternDoesNotCrossDomainBoundaries(t *testing.T) {
 			allowedOrigins: "https://myapp.com*",
 			origin:         "https://myapp.comXXXXX",
 			expected:       false,
+		},
+		{
+			name:           "leading wildcard rejects partial label suffix bypass",
+			allowedOrigins: "https://*myapp.com",
+			origin:         "https://evilmyapp.com",
+			expected:       false,
+		},
+		{
+			name:           "port wildcard matches port component",
+			allowedOrigins: "https://localhost:*",
+			origin:         "https://localhost:8080",
+			expected:       true,
+		},
+		{
+			name:           "port wildcard rejects suffix domain bypass",
+			allowedOrigins: "https://myapp.com:*",
+			origin:         "https://myapp.com.evil.com:443",
+			expected:       false,
+		},
+		{
+			name:           "partial port wildcard rejects suffix port bypass",
+			allowedOrigins: "https://myapp.com:*443",
+			origin:         "https://myapp.com:8443",
+			expected:       false,
+		},
+		{
+			name:           "partial label wildcard rejects middle wildcard bypass",
+			allowedOrigins: "https://myapp.*com",
+			origin:         "https://myapp.evilcom",
+			expected:       false,
+		},
+		{
+			name:           "partial label wildcard with port rejects suffix domain bypass",
+			allowedOrigins: "https://myapp.com*:*",
+			origin:         "https://myapp.com.evil.com:443",
+			expected:       false,
+		},
+		{
+			name:           "host and port wildcards match separate components",
+			allowedOrigins: "https://*.myapp.com:*",
+			origin:         "https://api.myapp.com:443",
+			expected:       true,
 		},
 		// Exact match still works
 		{
@@ -103,5 +151,21 @@ func TestWildcardPatternDoesNotCrossDomainBoundaries(t *testing.T) {
 					tt.origin, tt.allowedOrigins, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestGetOriginFromURLRejectsUserinfoBypass(t *testing.T) {
+	startURL := mustParseURL("https://wails.localhost")
+	v := NewOriginValidator(startURL, "https://*.myapp.com")
+
+	origin, err := v.GetOriginFromURL("https://api.myapp.com@evil.com")
+	if err != nil {
+		t.Fatalf("GetOriginFromURL returned error: %v", err)
+	}
+	if origin != "https://evil.com" {
+		t.Fatalf("GetOriginFromURL returned %q, want %q", origin, "https://evil.com")
+	}
+	if v.IsOriginAllowed(origin) {
+		t.Fatalf("IsOriginAllowed(%q) = true, want false", origin)
 	}
 }
